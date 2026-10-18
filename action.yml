@@ -1,0 +1,125 @@
+name: Modudraft drift check
+description: Check that your Modudraft architecture diagram still matches the code in your repository.
+author: Modudraft
+branding:
+  icon: git-pull-request
+  color: blue
+
+inputs:
+  api-key:
+    description: Modudraft API key (store it as a repository secret).
+    required: true
+  diagram:
+    description: Diagram id to check. Optional when modudraft.json names it.
+    required: false
+    default: ''
+  dir:
+    description: Directory to scan, relative to the workspace.
+    required: false
+    default: '.'
+  on-drift:
+    description: 'What to do on drift: report, fail or update-diagram.'
+    required: false
+    default: fail
+  comment:
+    description: Post the result as a pull request comment (needs pull-requests write).
+    required: false
+    default: 'true'
+  remove-missing:
+    description: Remove diagram items whose source is gone when updating.
+    required: false
+    default: 'false'
+  allow-update-on-pr:
+    description: Allow update-diagram on pull requests (off by default).
+    required: false
+    default: 'false'
+  mcp-version:
+    description: Version of @modudraft/mcp to run.
+    required: false
+    default: latest
+  github-token:
+    description: Token used to post the pull request comment.
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: '22'
+
+    - name: Guard
+      id: guard
+      shell: bash
+      env:
+        MODUDRAFT_API_KEY: ${{ inputs.api-key }}
+        INPUT_ON_DRIFT: ${{ inputs.on-drift }}
+        INPUT_ALLOW_UPDATE_ON_PR: ${{ inputs.allow-update-on-pr }}
+      run: node "$GITHUB_ACTION_PATH/comment.mjs" guard
+
+    - name: Check drift
+      id: check
+      if: steps.guard.outputs.skip != 'true'
+      shell: bash
+      env:
+        MODUDRAFT_API_KEY: ${{ inputs.api-key }}
+        INPUT_DIAGRAM: ${{ inputs.diagram }}
+        INPUT_DIR: ${{ inputs.dir }}
+        INPUT_ON_DRIFT: ${{ inputs.on-drift }}
+        INPUT_REMOVE_MISSING: ${{ inputs.remove-missing }}
+        INPUT_MCP_VERSION: ${{ inputs.mcp-version }}
+      run: |
+        out="$RUNNER_TEMP/modudraft-drift.md"
+        err="$RUNNER_TEMP/modudraft-drift.err"
+        case "$INPUT_DIR" in
+          /*) target="$INPUT_DIR" ;;
+          *) target="$GITHUB_WORKSPACE/$INPUT_DIR" ;;
+        esac
+        args=(check --format markdown --on-drift "$INPUT_ON_DRIFT" --dir "$target")
+        if [ -n "$INPUT_DIAGRAM" ]; then args+=(--diagram "$INPUT_DIAGRAM"); fi
+        if [ "$INPUT_REMOVE_MISSING" = "true" ]; then args+=(--remove-missing); fi
+        # Run from RUNNER_TEMP so a .npmrc in the checked-out repo cannot redirect the package download.
+        cd "$RUNNER_TEMP"
+        set +e
+        npx -y "@modudraft/mcp@$INPUT_MCP_VERSION" "${args[@]}" > "$out" 2> "$err"
+        code=$?
+        set -e
+        # Repo-derived text (on stdout and stderr) must not be interpreted as workflow commands.
+        token="$(node -e "console.log(require('crypto').randomUUID())")"
+        echo "::stop-commands::$token"
+        cat "$out"
+        # stderr goes to stdout so it cannot arrive after the end token on a separate pipe.
+        cat "$err"
+        # Newline first: CLI output without a trailing newline must not swallow the end token.
+        echo
+        echo "::$token::"
+        echo "output-file=$out" >> "$GITHUB_OUTPUT"
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+
+    - name: Report
+      if: always() && steps.guard.outputs.skip != 'true' && steps.check.outcome != 'skipped'
+      continue-on-error: true
+      shell: bash
+      env:
+        DRIFT_OUTPUT_FILE: ${{ steps.check.outputs.output-file }}
+        EXIT_CODE: ${{ steps.check.outputs.exit-code }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        # On exit 2 the CLI markdown (when there is any) lists the per-file errors.
+        if [ -s "$DRIFT_OUTPUT_FILE" ]; then
+          cat "$DRIFT_OUTPUT_FILE" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "Drift check failed to run. See the job log." >> "$GITHUB_STEP_SUMMARY"
+        fi
+        if [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ "$INPUT_COMMENT" = "true" ]; then
+          node "$GITHUB_ACTION_PATH/comment.mjs" upsert || echo "::warning::Could not post the PR comment"
+        fi
+
+    - name: Exit with the check result
+      if: always() && steps.guard.outcome == 'success' && steps.guard.outputs.skip != 'true'
+      shell: bash
+      env:
+        EXIT_CODE: ${{ steps.check.outputs.exit-code }}
+      run: exit "${EXIT_CODE:-2}"
