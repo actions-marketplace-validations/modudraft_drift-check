@@ -36,7 +36,7 @@ inputs:
   mcp-version:
     description: Version of @modudraft/mcp to run. Defaults to the version this Action release was tested with.
     required: false
-    default: '0.26.3'
+    default: '0.27.0'
   github-token:
     description: Token used to post the pull request comment.
     required: false

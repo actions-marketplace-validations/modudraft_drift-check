@@ -32,7 +32,7 @@ jobs:
 | `comment` | `true` | On pull requests, also post the result as a PR comment, updated in place on each run. The job summary is always written. |
 | `remove-missing` | `false` | Remove diagram items whose source is gone when updating. |
 | `allow-update-on-pr` | `false` | Permit `update-diagram` on pull requests. |
-| `mcp-version` | the tested version (`0.26.3` in this release) | Version of `@modudraft/mcp` to run. Each Action release pins the MCP version it was tested with; set it to try another. |
+| `mcp-version` | the tested version (`0.27.0` in this release) | Version of `@modudraft/mcp` to run. Each Action release pins the MCP version it was tested with; set it to try another. |
 | `github-token` | `${{ github.token }}` | Token used to post the comment. The comment is updated in place only when it was posted by a bot account (the default `github.token`); with a personal access token each run posts a new comment. |
 
 Exit codes: `0` in sync, report mode, or update succeeded; `1` drift with `on-drift: fail`; `2` error (bad input, unparseable file, sources that match no files, nothing checked, read-only key). Per-file errors are listed in the comment and the job summary.
